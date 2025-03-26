@@ -12,7 +12,7 @@ from detectron2.engine import DefaultTrainer, default_argument_parser, default_s
 from detectron2.evaluation import verify_results
 from detectron2.utils.logger import setup_logger
 
-from model import sam_model
+from model import sam_model, sam_model_ov
 from model.visual_prompts import generate_clicks, generate_boxes
 from model.config import add_sam_config
 
