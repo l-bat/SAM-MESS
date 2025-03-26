@@ -1,6 +1,8 @@
 MODEL:
   META_ARCHITECTURE: "OpenVINO_SAM"
   WEIGHTS: "facebook/sam-vit-base"
+  MODEL_DIR: "ov_fp_sam"
+  MODEL_EXTENSION: "xml"
 DATASETS:
   TEST: ("ade20k_sem_seg_val",)
 INPUT:

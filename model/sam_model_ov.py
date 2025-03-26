@@ -22,17 +22,19 @@ class OpenVINO_SAM(torch.nn.Module):
                  num_classes: int,
                  background_class: int = 0,
                  prompt_type: str = "points",
+                 model_dir: str = "model",
+                 model_extension: str = "xml",
                  ):
         super().__init__()
         self.device = "CPU"
         # self.model = SamModel.from_pretrained(model_name).to(self.device)
         self.core = ov.Core()
-        self.processor = SamProcessor.from_pretrained("facebook/sam-vit-base")
+        self.processor = SamProcessor.from_pretrained(model_name)
 
         # Load OpenVINO models
-        model_name = "ov_fp_sam"
-        self.vision_encoder = self.core.compile_model(os.path.join(model_name, "openvino_vision_encoder_int8.xml"), self.device)
-        self.prompt_decoder = self.core.compile_model(os.path.join(model_name, "openvino_prompt_encoder_mask_decoder_int8.xml"), self.device)
+        prefix = "openvino_" if model_extension == "xml" else ""
+        self.vision_encoder = self.core.compile_model(os.path.join(model_dir, f"{prefix}vision_encoder.{model_extension}"), self.device)
+        self.prompt_decoder = self.core.compile_model(os.path.join(model_dir, f"{prefix}prompt_encoder_mask_decoder.{model_extension}"), self.device)
 
         self.vision_encoder_outputs = self.vision_encoder.outputs
         self.prompt_decoder_outputs = self.prompt_decoder.outputs
@@ -63,6 +65,8 @@ class OpenVINO_SAM(torch.nn.Module):
             "num_classes": len(meta.stuff_classes),
             "background_class": background_class,
             "prompt_type": cfg.PROMPT_TYPE,
+            "model_dir": cfg.MODEL.MODEL_DIR,
+            "model_extension": cfg.MODEL.MODEL_EXTENSION,
         }
 
     def forward(self, batched_inputs):
