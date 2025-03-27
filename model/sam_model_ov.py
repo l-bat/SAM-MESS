@@ -8,6 +8,7 @@ from detectron2.data import MetadataCatalog
 from .visual_prompts import generate_clicks, generate_boxes
 from .sam_model import rescale_inputs
 import openvino as ov
+import onnxruntime as ort
 import numpy as np
 import os
 
@@ -27,17 +28,24 @@ class OpenVINO_SAM(torch.nn.Module):
                  ):
         super().__init__()
         self.device = "CPU"
-        # self.model = SamModel.from_pretrained(model_name).to(self.device)
         self.core = ov.Core()
         self.processor = SamProcessor.from_pretrained(model_name)
 
-        # Load OpenVINO models
-        prefix = "openvino_" if model_extension == "xml" else ""
-        self.vision_encoder = self.core.compile_model(os.path.join(model_dir, f"{prefix}vision_encoder.{model_extension}"), self.device)
-        self.prompt_decoder = self.core.compile_model(os.path.join(model_dir, f"{prefix}prompt_encoder_mask_decoder.{model_extension}"), self.device)
-
-        self.vision_encoder_outputs = self.vision_encoder.outputs
-        self.prompt_decoder_outputs = self.prompt_decoder.outputs
+        # Load models
+        if model_extension == "xml":
+            self.vision_encoder = self.core.compile_model(os.path.join(model_dir, "openvino_vision_encoder.xml"), self.device)
+            self.prompt_decoder = self.core.compile_model(os.path.join(model_dir, "openvino_prompt_encoder_mask_decoder.xml"), self.device)
+            self.vision_encoder_outputs = self.vision_encoder.outputs
+            self.prompt_decoder_outputs = self.prompt_decoder.outputs
+            self.runner = lambda model, inputs: model(inputs)
+        else:
+            onnx_encoder_path = os.path.join(model_dir, "vision_encoder.onnx")
+            onnx_decoder_path = os.path.join(model_dir, "prompt_encoder_mask_decoder.onnx")
+            self.vision_encoder = ort.InferenceSession(onnx_encoder_path)
+            self.prompt_decoder = ort.InferenceSession(onnx_decoder_path)
+            self.vision_encoder_outputs = [0, 1]
+            self.prompt_decoder_outputs = [0, 1]
+            self.runner = lambda model, inputs: model.run(None, inputs)
 
         self.num_classes = num_classes
         self.background_class = background_class if background_class <= num_classes else num_classes
@@ -109,24 +117,20 @@ class OpenVINO_SAM(torch.nn.Module):
 
         # Run vision encoder
         image_tensor = inputs["pixel_values"].numpy()
-        encoder_outputs = self.vision_encoder([image_tensor])
+        encoder_outputs = self.runner(self.vision_encoder, {"pixel_values": image_tensor})
         image_embeddings = encoder_outputs[self.vision_encoder_outputs[0]]
         image_positional_embeddings = encoder_outputs[self.vision_encoder_outputs[1]]
 
-        # print("inputs", inputs.keys())
-        # inputs dict_keys(['pixel_values', 'original_sizes', 'reshaped_input_sizes', 'input_points'])
-        # raise ""
-
         if "input_points" in inputs and "input_labels" not in inputs:
-            inputs["input_labels"] = np.ones_like(inputs["input_points"][:, :, :, 0], dtype=np.int32)
+            inputs["input_labels"] = np.ones_like(inputs["input_points"][:, :, :, 0], dtype=np.int64)
 
         # Run prompt decoder
-        decoder_outputs = self.prompt_decoder([
-            inputs["input_points"].numpy(),
-            inputs["input_labels"],
-            image_embeddings,
-            image_positional_embeddings
-        ])
+        decoder_outputs = self.runner(self.prompt_decoder, {
+            "input_points": inputs["input_points"].numpy().astype(np.float32),
+            "input_labels": inputs["input_labels"],
+            "image_embeddings": image_embeddings.astype(np.float32),
+            "image_positional_embeddings": image_positional_embeddings.astype(np.float32),
+        })
 
         pred_masks = decoder_outputs[self.prompt_decoder_outputs[1]]
         pred_masks_tensor = torch.tensor(pred_masks)
